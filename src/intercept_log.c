@@ -821,8 +821,9 @@ intercept_setup_log(const char *path, const char *trunc)
 		if (pid < 0)
 			return;
 
-		print_number(c, pid, 10, 0);
+		c = print_number(c, pid, 10, 0);
 	}
+	*c = '\0';
 
 	int flags = O_CREAT | O_RDWR | O_APPEND | O_TRUNC;
 	if (trunc && trunc[0] == '0')
