@@ -100,7 +100,7 @@ static const struct syscall_format formats[] = {
 	SARGS(clone, rdec, arg_clone_flags, arg_pointer, arg_pointer, arg_pointer, arg_),
 	SARGS(fork, rdec, arg_none),
 	SARGS(vfork, rdec, arg_none),
-	SARGS(execve, rdec, arg_, arg_, arg_),
+	SARGS(execve, rdec, arg_cstr, arg_, arg_),
 	SARGS(exit, rnoreturn, arg_),
 	SARGS(wait4, rdec, arg_dec, arg_, arg_, arg_),
 	SARGS(kill, rdec, arg_, arg_),
