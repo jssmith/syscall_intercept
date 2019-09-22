@@ -100,6 +100,7 @@ debug_dump(const char *fmt, ...)
 }
 
 static void log_header(void);
+static void log_cmd_args(int, char **);
 
 void __attribute__((noreturn)) xlongjmp(long rip, long rsp, long rax);
 
@@ -461,6 +462,7 @@ intercept(int argc, char **argv)
 	intercept_setup_log(getenv("INTERCEPT_LOG"),
 			getenv("INTERCEPT_LOG_TRUNC"));
 	log_header();
+	log_cmd_args(argc, argv);
 	init_patcher();
 
 	dl_iterate_phdr(analyze_object, NULL);
@@ -488,6 +490,26 @@ log_header(void)
 		"paste $tempfile2 $0 ; exit 0\n";
 
 	intercept_log(self_decoder, sizeof(self_decoder) - 1);
+}
+
+static void
+log_cmd_args(int argc, char **argv)
+{
+	char buf[10000];
+	char *pos = buf;
+	size_t remaining = sizeof(buf) - 2;
+	int n = snprintf(buf, remaining, "COMMAND: %s", argv[0]);
+	pos += n;
+	remaining -= n;
+
+	for (int i = 1; i < argc && remaining > 0; ++i) {
+		n = snprintf(pos, remaining, " %s", argv[i]);
+		pos += n;
+		remaining -= n;
+	}
+	snprintf(pos, remaining, "\n");
+
+	intercept_log(buf, strlen(buf));
 }
 
 /*
@@ -671,6 +693,8 @@ struct wrapper_ret
 intercept_routine_post_clone(struct context *context)
 {
 	if (context->rax == 0) {
+		intercept_setup_log(getenv("INTERCEPT_LOG"),
+			getenv("INTERCEPT_LOG_TRUNC"));
 		if (intercept_hook_point_clone_child != NULL)
 			intercept_hook_point_clone_child();
 	} else {

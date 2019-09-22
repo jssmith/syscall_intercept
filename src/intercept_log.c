@@ -814,6 +814,10 @@ intercept_setup_log(const char *path, const char *trunc)
 		path++;
 	}
 
+	int flags = O_CREAT | O_RDWR | O_APPEND | O_TRUNC;
+	if (trunc && trunc[0] == '0')
+		flags &= ~O_TRUNC;
+
 	/* c points to the terminating null */
 	if (c[-1] == '-') {
 		/* if the last char was '-', append the pid to the path */
@@ -822,12 +826,18 @@ intercept_setup_log(const char *path, const char *trunc)
 			return;
 
 		c = print_number(c, pid, 10, 0);
+	} else {
+		if (log_fd != -1) {
+			int rc = syscall_no_intercept(SYS_dup2, log_fd, log_fd);
+			if (rc == 0) {
+				return;
+			} else {
+				log_fd = -1;
+			}
+		}
 	}
-	*c = '\0';
 
-	int flags = O_CREAT | O_RDWR | O_APPEND | O_TRUNC;
-	if (trunc && trunc[0] == '0')
-		flags &= ~O_TRUNC;
+	*c = '\0';
 
 	intercept_log_close(); /* in case a log was already open */
 

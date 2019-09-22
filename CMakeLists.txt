@@ -134,8 +134,8 @@ add_library(syscall_intercept_static STATIC syscall_intercept_scoped.o)
 add_dependencies(syscall_intercept_shared generate_syscall_intercept_scoped)
 add_dependencies(syscall_intercept_static generate_syscall_intercept_scoped)
 
-set_target_properties(syscall_intercept_base_c
-		PROPERTIES C_VISIBILITY_PRESET hidden)
+#set_target_properties(syscall_intercept_base_c
+#		PROPERTIES C_VISIBILITY_PRESET hidden)
 
 target_link_libraries(syscall_intercept_shared
 	PRIVATE ${CMAKE_DL_LIBS} ${capstone_LIBRARIES})
