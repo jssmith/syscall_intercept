@@ -52,6 +52,7 @@
 #include <sys/mman.h>
 #include <stdarg.h>
 #include <sys/auxv.h>
+#include <time.h>
 
 #include "intercept.h"
 #include "intercept_log.h"
@@ -436,6 +437,11 @@ analyze_object(struct dl_phdr_info *info, size_t size, void *data)
 
 const char *cmdline;
 
+static double ts_diff(struct timespec begin, struct timespec end) {
+	return (double)(end.tv_sec - begin.tv_sec) +
+		0.000000001 * (end.tv_nsec - begin.tv_nsec);
+}
+
 /*
  * intercept - This is where the highest level logic of hotpatching
  * is described. Upon startup, this routine looks for libc, and libpthread.
@@ -463,15 +469,55 @@ intercept(int argc, char **argv)
 			getenv("INTERCEPT_LOG_TRUNC"));
 	log_header();
 	log_cmd_args(argc, argv);
-	init_patcher();
 
+	struct timespec patch_start;
+	struct timespec patch_end;
+	struct timespec patch_init_start;
+	struct timespec patch_init_end;
+
+	struct timespec patch_analyze_start;
+	struct timespec patch_analyze_end;
+
+	struct timespec patch_mprotect_start;
+	struct timespec patch_mprotect_end;
+
+	struct timespec patch_activate_start;
+	struct timespec patch_activate_end;
+
+	clock_gettime(CLOCK_MONOTONIC, &patch_start);
+	patch_init_start = patch_start;
+	init_patcher();
+	clock_gettime(CLOCK_MONOTONIC, &patch_init_end);
+	patch_analyze_start = patch_init_end;
 	dl_iterate_phdr(analyze_object, NULL);
 	if (!libc_found)
 		xabort("libc not found");
-
+	clock_gettime(CLOCK_MONOTONIC, &patch_analyze_end);
+	patch_mprotect_start = patch_analyze_end;
 	mprotect_asm_wrappers();
+	clock_gettime(CLOCK_MONOTONIC, &patch_mprotect_end);
+	patch_activate_start = patch_mprotect_end;
 	for (unsigned i = 0; i < objs_count; ++i)
 		activate_patches(objs + i);
+	clock_gettime(CLOCK_MONOTONIC, &patch_activate_end);
+	patch_end = patch_activate_end;
+
+	char buf[1000];
+	sprintf(buf, "HOT PATCH TIME %f\n",
+		ts_diff(patch_start, patch_end));
+	intercept_log(buf, strlen(buf));
+	sprintf(buf, "HOT PATCH init %f\n",
+		ts_diff(patch_init_start, patch_init_end));
+	intercept_log(buf, strlen(buf));
+	sprintf(buf, "HOT PATCH analyze %f\n",
+		ts_diff(patch_analyze_start, patch_analyze_end));
+	intercept_log(buf, strlen(buf));
+	sprintf(buf, "HOT PATCH mprotect %f\n",
+		ts_diff(patch_mprotect_start, patch_mprotect_end));
+	intercept_log(buf, strlen(buf));
+	sprintf(buf, "HOT PATCH activate %f\n",
+		ts_diff(patch_activate_start, patch_activate_end));
+	intercept_log(buf, strlen(buf));
 }
 
 /*
