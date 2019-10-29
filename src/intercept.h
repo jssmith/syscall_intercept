@@ -161,6 +161,9 @@ struct intercept_desc {
 	/* where the object is in fs */
 	const char *path;
 
+	/* where the object data cache file is in fs */
+	const char *cache_path;
+
 	/*
 	 * Some sections of the library from which information
 	 * needs to be extracted.

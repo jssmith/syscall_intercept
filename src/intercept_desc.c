@@ -434,6 +434,8 @@ is_overwritable_nop(const struct intercept_disasm_result *ins)
 	return ins->is_nop && ins->length >= 2 + 5;
 }
 
+#define PTR64_LQ(A, B) ((uint64_t)A <= (uint64_t)B)
+
 /*
  * crawl_text
  * Crawl the text section, disassembling it all.
@@ -531,6 +533,16 @@ crawl_text(struct intercept_desc *desc)
 			assert(syscall_offset >= 0);
 
 			patch->syscall_offset = (unsigned long)syscall_offset;
+
+			// path->syscall_addr <- offset from desc->text_start
+			assert(PTR64_LQ(desc->text_start, patch->syscall_addr));
+			assert(PTR64_LQ(patch->syscall_addr, desc->text_end));
+
+			// patch->containing_lib_path <- desc->path
+			assert(0 == patch->asm_wrapper);
+			assert(0 == patch->dst_jmp_patch);
+			assert(0 == patch->return_address);
+			assert(0 == patch->nop_trampoline.address);
 		}
 
 		prevs[0] = prevs[1];
@@ -543,6 +555,143 @@ crawl_text(struct intercept_desc *desc)
 	}
 
 	intercept_disasm_destroy(context);
+}
+
+/*
+ * crawl_save
+ * Save crawled data
+ */
+static void
+crawl_save(struct intercept_desc *desc, FILE *f_cache)
+{
+	// prepare for data serialization: pointers -> offsets
+	size_t n = 0;
+
+	for (; n < desc->count; ++n) {
+		*(uint64_t *)&(desc->items[n].syscall_addr) -=
+				(uint64_t)(desc->text_start);
+	}
+
+	for (n = 0; n < desc->nop_count; ++n) {
+		*(uint64_t *)&(desc->nop_table[n].address) -=
+				(uint64_t)(desc->text_start);
+	}
+
+	// serialized data
+	fwrite(desc, sizeof(struct intercept_desc), 1, f_cache);
+
+	const size_t jmptbl_size =
+			(size_t)(desc->text_end - desc->text_start + 1) / 8 + 1;
+	if (jmptbl_size > 0) {
+		fwrite(desc->jump_table, 1, jmptbl_size, f_cache);
+	}
+
+	if (desc->nop_count > 0) {
+		fwrite(desc->nop_table,
+				sizeof(desc->nop_table[0]),
+				desc->nop_count,
+				f_cache);
+		for (n = 0; n < desc->nop_count; ++n) {
+			*(uint64_t *)&(desc->nop_table[n].address) +=
+				(uint64_t)(desc->text_start);
+		}
+	}
+
+	if (desc->count > 0) {
+		fwrite(desc->items,
+			sizeof(desc->items[0]),
+			desc->count,
+			f_cache);
+
+		// post-serialization actions: offsets -> pointes
+		for (n = 0; n < desc->count; ++n) {
+			*(uint64_t *)&(desc->items[n].syscall_addr) +=
+					(uint64_t)(desc->text_start);
+		}
+	}
+}
+
+extern void
+intercept_log(const char *buffer, size_t len);
+
+/*
+ * crawl_read
+ * Read crawled data
+ */
+int
+crawl_read(struct intercept_desc *desc, FILE *f_cache)
+{
+	struct intercept_desc tmp_desc;
+	int res = 0;
+	size_t n = 0;
+
+	// read serialized data
+	if (1 != fread(&tmp_desc, sizeof(tmp_desc), 1, f_cache)) {
+		res = 1;
+	}
+
+	const size_t jmptbl_size =
+			(size_t)(desc->text_end - desc->text_start + 1) / 8 + 1;
+	if (jmptbl_size != fread(desc->jump_table,
+						1,
+						jmptbl_size, f_cache)) {
+		res = 2;
+	}
+
+	if (tmp_desc.nop_count > 0) {
+		desc->nop_count = tmp_desc.nop_count;
+		fread(desc->nop_table,
+				sizeof(desc->nop_table[0]),
+				desc->nop_count,
+				f_cache);
+		for (n = 0; n < desc->nop_count; ++n) {
+			*(uint64_t *)&(desc->nop_table[n].address) +=
+				(uint64_t)(desc->text_start);
+		}
+	}
+
+	if (tmp_desc.count > 0 && 0 == res) {
+
+		if (desc->count < tmp_desc.count) {
+			if (NULL == desc->items) {
+				desc->items =
+			xmmap_anon(sizeof(desc->items[0])*tmp_desc.count);
+			} else {
+				desc->items =
+			xmremap(desc->items,
+				sizeof(desc->items[0])*desc->count,
+				sizeof(desc->items[0])*tmp_desc.count);
+			}
+		}
+
+		if (tmp_desc.count
+				!= fread(desc->items,
+						sizeof(desc->items[0]),
+						tmp_desc.count,
+						f_cache)) {
+
+				res = 3;
+		}
+
+		desc->count = tmp_desc.count;
+
+		// post-serialization actions: offsets -> pointes
+		if (0 == res) {
+			for (n = 0; n < desc->count; ++n) {
+				*(uint64_t *)&(desc->items[n].syscall_addr) +=
+						(uint64_t)(desc->text_start);
+				desc->items[n].containing_lib_path = desc->path;
+
+				assert(0 == desc->items[n].asm_wrapper);
+				assert(0 == desc->items[n].dst_jmp_patch);
+				assert(0 == desc->items[n].return_address);
+				assert(0 ==
+					desc->items[n].nop_trampoline.address);
+			}
+		}
+	}
+
+	return res;
 }
 
 /*
@@ -674,6 +823,40 @@ allocate_trampoline_table(struct intercept_desc *desc)
 	desc->next_trampoline = desc->trampoline_table;
 }
 
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+static double ts_diff(struct timespec begin, struct timespec end) {
+	return (double)(end.tv_sec - begin.tv_sec) +
+		0.000000001 * (end.tv_nsec - begin.tv_nsec);
+}
+
+#include "intercept_log.h"
+
+#define OBJ_CACHE_CHMOD (S_IREAD|S_IWRITE|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
+
+#include <libgen.h>
+#include <sys/stat.h>
+
+/*
+ * Function to create directories recursively
+ */
+int
+mkpath(char *dir, mode_t mode)
+{
+	if (!dir) {
+		return 1;
+	}
+
+	if (strlen(dir) == 1 && dir[0] == '/')
+		return 0;
+
+	mkpath(dirname(strdupa(dir)), mode);
+
+	return mkdir(dir, mode);
+}
+
 /*
  * find_syscalls
  * The routine that disassembles a text section. Here is some higher level
@@ -714,5 +897,60 @@ find_syscalls(struct intercept_desc *desc)
 
 	syscall_no_intercept(SYS_close, fd);
 
-	crawl_text(desc);
+	/* ... */
+	struct timespec crawl_text_start;
+	struct timespec crawl_text_end;
+
+	/*
+	 * Check if data cache exists
+	 */
+	char opCache = 0;
+	int cache_error = 0;
+#if 1
+	FILE *f_cache = fopen(desc->cache_path, "rb");
+
+	if (f_cache) {
+		cache_error = crawl_read(desc, f_cache);
+		opCache = 1;
+
+		char buf[1000];
+		sprintf(buf, "READ CACHE PATCH %d\n", cache_error);
+		intercept_log(buf, strlen(buf));
+	}
+
+	if (!f_cache || cache_error) {
+		mkpath(dirname(strdupa(desc->cache_path)), OBJ_CACHE_CHMOD);
+		if ((f_cache = fopen(desc->cache_path, "wb+"))) {
+			opCache = 2;
+		} else {
+			opCache = 0;
+		}
+	}
+#else
+	FILE *f_cache = NULL;
+	mkpath(dirname(strdupa(desc->cache_path)), OBJ_CACHE_CHMOD);
+
+	if (f_cache = fopen(desc->cache_path, "wb+")) {
+		opCache = 2;
+	}
+#endif
+
+	clock_gettime(CLOCK_MONOTONIC, &crawl_text_start);
+
+	if (0 == opCache || 2 == opCache) {
+		crawl_text(desc);
+		crawl_save(desc, f_cache);
+	}
+	clock_gettime(CLOCK_MONOTONIC, &crawl_text_end);
+
+	if (f_cache) {
+		fclose(f_cache);
+	}
+
+	char buf[1000];
+	sprintf(buf, "CRAWL TEXT TIME %f\n PATCH %s\n CACHE PATCH %s\n",
+		ts_diff(crawl_text_start, crawl_text_end),
+		desc->path, desc->cache_path);
+	intercept_log(buf, strlen(buf));
+/* ... */
 }

@@ -315,6 +315,26 @@ get_object_path(const struct dl_phdr_info *info)
 	}
 }
 
+#define ENV_CACHE_ROOT "INTERCEPT_ANALYSIS_CACHE"
+#define OBJ_CACHE_EXT ".cache"
+
+/*
+ * get_object_cache_path - get the path of the object data cache
+ */
+static const char *
+get_object_cache_path(const char *obj_path)
+{
+	const char *env_cache_root = getenv(ENV_CACHE_ROOT);
+	if (!env_cache_root)
+		env_cache_root = "";
+
+	char *path = (char *)malloc(strlen(env_cache_root)
+			+ strlen(obj_path) + strlen(OBJ_CACHE_EXT) + 3);
+	sprintf(path, "%s%s%s", env_cache_root, obj_path, OBJ_CACHE_EXT);
+
+	return path;
+}
+
 static bool
 is_vdso(uintptr_t addr, const char *path)
 {
@@ -428,6 +448,8 @@ analyze_object(struct dl_phdr_info *info, size_t size, void *data)
 
 	patches->base_addr = (unsigned char *)info->dlpi_addr;
 	patches->path = path;
+	patches->cache_path = get_object_cache_path(path);
+
 	find_syscalls(patches);
 	allocate_trampoline_table(patches);
 	create_patch_wrappers(patches);
