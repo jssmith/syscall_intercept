@@ -622,12 +622,11 @@ int
 crawl_read(struct intercept_desc *desc, FILE *f_cache)
 {
 	struct intercept_desc tmp_desc;
-	int res = 0;
 	size_t n = 0;
 
 	// read serialized data
 	if (1 != fread(&tmp_desc, sizeof(tmp_desc), 1, f_cache)) {
-		res = 1;
+		return 1;
 	}
 
 	const size_t jmptbl_size =
@@ -635,22 +634,24 @@ crawl_read(struct intercept_desc *desc, FILE *f_cache)
 	if (jmptbl_size != fread(desc->jump_table,
 						1,
 						jmptbl_size, f_cache)) {
-		res = 2;
+		return 2;
 	}
 
 	if (tmp_desc.nop_count > 0) {
 		desc->nop_count = tmp_desc.nop_count;
-		fread(desc->nop_table,
+		if (desc->nop_count != fread(desc->nop_table,
 				sizeof(desc->nop_table[0]),
 				desc->nop_count,
-				f_cache);
+				f_cache)) {
+					return 3;
+		}
 		for (n = 0; n < desc->nop_count; ++n) {
 			*(uint64_t *)&(desc->nop_table[n].address) +=
 				(uint64_t)(desc->text_start);
 		}
 	}
 
-	if (tmp_desc.count > 0 && 0 == res) {
+	if (tmp_desc.count > 0) {
 
 		if (desc->count < tmp_desc.count) {
 			if (NULL == desc->items) {
@@ -670,28 +671,26 @@ crawl_read(struct intercept_desc *desc, FILE *f_cache)
 						tmp_desc.count,
 						f_cache)) {
 
-				res = 3;
+				return 4;
 		}
 
 		desc->count = tmp_desc.count;
 
 		// post-serialization actions: offsets -> pointes
-		if (0 == res) {
-			for (n = 0; n < desc->count; ++n) {
-				*(uint64_t *)&(desc->items[n].syscall_addr) +=
-						(uint64_t)(desc->text_start);
-				desc->items[n].containing_lib_path = desc->path;
+		for (n = 0; n < desc->count; ++n) {
+			*(uint64_t *)&(desc->items[n].syscall_addr) +=
+					(uint64_t)(desc->text_start);
+			desc->items[n].containing_lib_path = desc->path;
 
-				assert(0 == desc->items[n].asm_wrapper);
-				assert(0 == desc->items[n].dst_jmp_patch);
-				assert(0 == desc->items[n].return_address);
-				assert(0 ==
-					desc->items[n].nop_trampoline.address);
-			}
+			assert(0 == desc->items[n].asm_wrapper);
+			assert(0 == desc->items[n].dst_jmp_patch);
+			assert(0 == desc->items[n].return_address);
+			assert(0 ==
+				desc->items[n].nop_trampoline.address);
 		}
 	}
 
-	return res;
+	return 0;
 }
 
 /*
@@ -910,16 +909,18 @@ find_syscalls(struct intercept_desc *desc)
 	FILE *f_cache = fopen(desc->cache_path, "rb");
 
 	if (f_cache) {
-		cache_error = crawl_read(desc, f_cache);
-		opCache = 1;
-
-		char buf[1000];
-		sprintf(buf, "READ CACHE PATCH %d\n", cache_error);
-		intercept_log(buf, strlen(buf));
+		if (!(cache_error = crawl_read(desc, f_cache))) {
+			opCache = 1;
+		}
 	}
 
 	if (!f_cache || cache_error) {
 		mkpath(dirname(strdupa(desc->cache_path)), OBJ_CACHE_CHMOD);
+
+		if (f_cache) {
+			fclose(f_cache);
+		}
+
 		if ((f_cache = fopen(desc->cache_path, "wb+"))) {
 			opCache = 2;
 		} else {
@@ -937,9 +938,11 @@ find_syscalls(struct intercept_desc *desc)
 
 	clock_gettime(CLOCK_MONOTONIC, &crawl_text_start);
 
-	if (0 == opCache || 2 == opCache) {
+	if (1 != opCache) {
 		crawl_text(desc);
-		crawl_save(desc, f_cache);
+		if (2 == opCache) {
+			crawl_save(desc, f_cache);
+		}
 	}
 	clock_gettime(CLOCK_MONOTONIC, &crawl_text_end);
 
