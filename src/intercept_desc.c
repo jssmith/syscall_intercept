@@ -833,10 +833,11 @@ static double ts_diff(struct timespec begin, struct timespec end) {
 
 #include "intercept_log.h"
 
-#define OBJ_CACHE_CHMOD (S_IREAD|S_IWRITE|S_IRGRP|S_IWGRP|S_IROTH|S_IWOTH)
+#define OBJ_CACHE_CHMOD 0775
 
 #include <libgen.h>
 #include <sys/stat.h>
+#include <errno.h>
 
 /*
  * Function to create directories recursively
@@ -844,16 +845,25 @@ static double ts_diff(struct timespec begin, struct timespec end) {
 int
 mkpath(char *dir, mode_t mode)
 {
-	if (!dir) {
-		return 1;
+	int rc;
+	size_t len = strlen(dir);
+	char tmp[len + 1];
+	char *p = NULL;
+	memcpy(tmp, dir, len + 1);
+	if (tmp[len - 1] == '/') {
+		tmp[len - 1] = '\0';
 	}
-
-	if (strlen(dir) == 1 && dir[0] == '/')
-		return 0;
-
-	mkpath(dirname(strdupa(dir)), mode);
-
-	return mkdir(dir, mode);
+	for (p = tmp + 1; *p; p++) {
+		if (*p == '/') {
+			*p = '\0';
+			rc = mkdir(tmp, mode);
+			if (rc != 0 && errno != EEXIST) {
+				return rc;
+			}
+			*p = '/';
+		}
+	}
+	return mkdir(tmp, mode);
 }
 
 /*
