@@ -761,8 +761,6 @@ struct wrapper_ret
 intercept_routine_post_clone(struct context *context)
 {
 	if (context->rax == 0) {
-		intercept_setup_log(getenv("INTERCEPT_LOG"),
-			getenv("INTERCEPT_LOG_TRUNC"));
 		if (intercept_hook_point_clone_child != NULL)
 			intercept_hook_point_clone_child();
 	} else {
