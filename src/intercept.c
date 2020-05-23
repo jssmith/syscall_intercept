@@ -394,7 +394,7 @@ should_patch_object(uintptr_t addr, const char *path)
 		return true;
 	}
 
-    if (str_match(name, len, libdl)) {
+	if (str_match(name, len, libdl)) {
 		debug_dump(" - libdl found\n");
 		return true;
 	}
