@@ -363,7 +363,7 @@ should_patch_object(uintptr_t addr, const char *path)
 	}
 
 	static const char libc[] = "libc";
-	static const char libdl[] = "libdl";
+	static const char ld[] = "ld";
 	static const char pthr[] = "libpthread";
 	static const char caps[] = "libcapstone";
 
@@ -394,8 +394,8 @@ should_patch_object(uintptr_t addr, const char *path)
 		return true;
 	}
 
-	if (str_match(name, len, libdl)) {
-		debug_dump(" - libdl found\n");
+	if (str_match(name, len, ld)) {
+		debug_dump(" - ld found\n");
 		return true;
 	}
 
