@@ -372,6 +372,11 @@ should_patch_object(uintptr_t addr, const char *path)
 		return false;
 	}
 
+	if (strstr(path, "ld.bfd") != NULL) {
+		return false;
+	}
+
+
 	const char *name = get_lib_short_name(path);
 	size_t len = strcspn(name, "-.");
 
